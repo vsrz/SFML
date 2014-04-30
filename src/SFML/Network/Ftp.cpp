@@ -32,6 +32,7 @@
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <cstdio>
 
 
 namespace sf
@@ -51,7 +52,13 @@ public :
     void send(const std::vector<char>& data);
 
     ////////////////////////////////////////////////////////////
+    void send(std::ifstream& file);
+
+    ////////////////////////////////////////////////////////////
     void receive(std::vector<char>& data);
+
+    ////////////////////////////////////////////////////////////
+    void receive(std::ofstream& file);
 
 private :
 
@@ -285,33 +292,34 @@ Ftp::Response Ftp::download(const std::string& remoteFile, const std::string& lo
         response = sendCommand("RETR", remoteFile);
         if (response.isOk())
         {
+            // Extract the filename from the file path
+            std::string filename = remoteFile;
+            std::string::size_type pos = filename.find_last_of("/\\");
+            if (pos != std::string::npos)
+                filename = filename.substr(pos + 1);
+
+            // Make sure the destination path ends with a slash
+            std::string path = localPath;
+            if (!path.empty() && (path[path.size() - 1] != '\\') && (path[path.size() - 1] != '/'))
+                path += "/";
+
+            // Create the file and truncate it if necessary
+            std::ofstream file((path + filename).c_str(), std::ios_base::binary | std::ios_base::trunc);
+            if (!file)
+                return Response(Response::InvalidFile);
+
             // Receive the file data
-            std::vector<char> fileData;
-            data.receive(fileData);
+            data.receive(file);
+
+            // Close the file
+            file.close();
 
             // Get the response from the server
             response = getResponse();
-            if (response.isOk())
-            {
-                // Extract the filename from the file path
-                std::string filename = remoteFile;
-                std::string::size_type pos = filename.find_last_of("/\\");
-                if (pos != std::string::npos)
-                    filename = filename.substr(pos + 1);
 
-                // Make sure the destination path ends with a slash
-                std::string path = localPath;
-                if (!path.empty() && (path[path.size() - 1] != '\\') && (path[path.size() - 1] != '/'))
-                    path += "/";
-
-                // Create the file and copy the received data into it
-                std::ofstream file((path + filename).c_str(), std::ios_base::binary);
-                if (!file)
-                    return Response(Response::InvalidFile);
-
-                if (!fileData.empty())
-                    file.write(&fileData[0], static_cast<std::streamsize>(fileData.size()));
-            }
+            // If the download was unsuccessful, delete the partial file
+            if (!response.isOk())
+                std::remove((path + filename).c_str());
         }
     }
 
@@ -326,13 +334,6 @@ Ftp::Response Ftp::upload(const std::string& localFile, const std::string& remot
     std::ifstream file(localFile.c_str(), std::ios_base::binary);
     if (!file)
         return Response(Response::InvalidFile);
-
-    file.seekg(0, std::ios::end);
-    std::size_t length = static_cast<std::size_t>(file.tellg());
-    file.seekg(0, std::ios::beg);
-    std::vector<char> fileData(length);
-    if (length > 0)
-        file.read(&fileData[0], static_cast<std::streamsize>(length));
 
     // Extract the filename from the file path
     std::string filename = localFile;
@@ -355,7 +356,7 @@ Ftp::Response Ftp::upload(const std::string& localFile, const std::string& remot
         if (response.isOk())
         {
             // Send the file data
-            data.send(fileData);
+            data.send(file);
 
             // Get the response from the server
             response = getResponse();
@@ -604,11 +605,49 @@ void Ftp::DataChannel::receive(std::vector<char>& data)
 
 
 ////////////////////////////////////////////////////////////
+void Ftp::DataChannel::receive(std::ofstream& file)
+{
+    // Receive data
+    char buffer[1024];
+    std::size_t received;
+    while (m_dataSocket.receive(buffer, sizeof(buffer), received) == Socket::Done)
+        file.write(buffer, static_cast<std::streamsize>(received));
+
+    // Close the data socket
+    m_dataSocket.disconnect();
+}
+
+
+////////////////////////////////////////////////////////////
 void Ftp::DataChannel::send(const std::vector<char>& data)
 {
     // Send data
     if (!data.empty())
         m_dataSocket.send(&data[0], data.size());
+
+    // Close the data socket
+    m_dataSocket.disconnect();
+}
+
+
+////////////////////////////////////////////////////////////
+void Ftp::DataChannel::send(std::ifstream& file)
+{
+    // Send data
+    char buffer[1024];
+    std::size_t count;
+
+    file.read(buffer, sizeof(buffer));
+    count = file.gcount();
+
+    while (count)
+    {
+        if (m_dataSocket.send(buffer, count) != Socket::Done)
+            break;
+
+        file.read(buffer, sizeof(buffer));
+        count = file.gcount();
+    }
 
     // Close the data socket
     m_dataSocket.disconnect();
