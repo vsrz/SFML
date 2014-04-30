@@ -286,8 +286,8 @@ void Text::ensureGeometryUpdate() const
         x += static_cast<float>(m_font->getKerning(prevChar, curChar, m_characterSize));
         prevChar = curChar;
 
-        // If we're using the underlined style and there's a new line, draw a line
-        if (underlined && (curChar == L'\n'))
+        // If we're using the underlined style and there's a new line or a vertical tab, draw a line
+        if (underlined && ((curChar == L'\n') || (curChar == L'\v')))
         {
             float top = y + underlineOffset;
             float bottom = top + underlineThickness;
@@ -309,10 +309,10 @@ void Text::ensureGeometryUpdate() const
 
             switch (curChar)
             {
-                case ' ' :  x += hspace;        break;
-                case '\t' : x += hspace * 4;    break;
-                case '\n' : y += vspace; x = 0; break;
-                case '\v' : y += vspace * 4;    break;
+                case ' ' :  x += hspace;            break;
+                case '\t' : x += hspace * 4;        break;
+                case '\n' : y += vspace; x = 0;     break;
+                case '\v' : y += vspace * 4; x = 0; break;
             }
 
             // Update the current bounds (max coordinates)
